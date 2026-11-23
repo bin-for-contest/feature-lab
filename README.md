@@ -1,2 +1,0 @@
-﻿# feature-lab
-protein sequence language model에 물리화학적 성질, 3차원 구조적 제약 등을 추가적인 feature 정보로 이용하여 multi-modal 모델을 구축하여 BRCA1 변이의 기능 손상 예측 정확도를 높임
