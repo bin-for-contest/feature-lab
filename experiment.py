@@ -6,16 +6,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import joblib
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
 import sklearn
 from scipy.stats import spearmanr
 from sklearn.base import clone
-from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, roc_auc_score
 from sklearn.model_selection import GroupKFold
 from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
 
 from features import GROUPS, add_structure, design_matrix, read_table, variants
 
@@ -45,16 +44,16 @@ def predict(estimator, X, task):
 def evaluate(df, groups, y, folds, args, output):
     """각 행을 해당 위치를 한 번도 보지 않은 모델로 예측해 OOF 벡터를 완성함."""
     X = design_matrix(df, groups)
-    head = (Ridge(alpha=args.alpha, solver="lsqr", tol=1e-6) if args.task == "regression"
-            else LogisticRegression(C=args.c, max_iter=3000))
-    pipeline = make_pipeline(StandardScaler(), head)
+    head = (lgb.LGBMRegressor(random_state=0, verbosity=-1) if args.task == "regression"
+            else lgb.LGBMClassifier(random_state=0, verbosity=-1))
+    pipeline = make_pipeline(head)
     oof = np.empty(len(df))
     fold_ids = np.zeros(len(df), dtype=int)
     scores = []
     for fold, (train, valid) in enumerate(folds, start=1):
         if args.task == "classification" and np.unique(y[train]).size != 2:
             raise ValueError(f"fold {fold}의 학습 위치에 두 클래스가 모두 필요함")
-        # scaler까지 fold별로 새로 fit함. 검증 위치의 평균/표준편차가 학습에 섞이지 않음.
+        # 각 fold마다 새 모델을 fit함. LightGBM은 feature 표준화 없이 사용함.
         fitted = clone(pipeline).fit(X.iloc[train], y[train])
         oof[valid] = predict(fitted, X.iloc[valid], args.task)
         fold_ids[valid] = fold
@@ -72,7 +71,8 @@ def evaluate(df, groups, y, folds, args, output):
     # OOF 평가를 끝낸 후 전체 행으로 다시 fit한 모델은 새로운 변이의 추론용으로 보관함.
     final_model = pipeline.fit(X, y)
     joblib.dump({"model": final_model, "groups": groups, "columns": columns,
-                 "task": args.task, "sklearn_version": sklearn.__version__}, output / "model.joblib")
+                 "task": args.task, "sklearn_version": sklearn.__version__,
+                 "lightgbm_version": lgb.__version__}, output / "model.joblib")
     return {"features": "+".join(groups), "n_rows": len(df), "n_features": len(columns),
             **metrics(y, oof, args.task)}
 
@@ -80,9 +80,6 @@ def evaluate(df, groups, y, folds, args, output):
 def run(args):
     if args.out.exists():
         raise ValueError(f"출력 폴더가 이미 있음. 새 --out을 지정할 것: {args.out}")
-    if (not np.isfinite(args.alpha) or args.alpha <= 0 or
-            not np.isfinite(args.c) or args.c <= 0):
-        raise ValueError("--alpha와 --c는 양의 유한값이어야 함")
     df = variants(read_table(args.input)).sort_values("mutant").reset_index(drop=True)
     if args.structure:
         df = add_structure(df, args.structure)
@@ -123,7 +120,8 @@ def run(args):
                 summary[f"delta_{key}"] = numeric - numeric.iloc[0]
         summary.to_csv(staging / "summary.csv", index=False)
         config = {k: str(v.resolve()) if isinstance(v, Path) else v for k, v in vars(args).items()}
-        config.update({"target": label, "groups_for_cv": "pos", "sklearn_version": sklearn.__version__})
+        config.update({"target": label, "groups_for_cv": "pos", "sklearn_version": sklearn.__version__,
+                       "lightgbm_version": lgb.__version__})
         write_json(staging / "config.json", config)
         staging.rename(args.out)
     print(summary.to_string(index=False))
@@ -160,8 +158,6 @@ def main():
                          default=["esm"], help="공백으로 구분한 feature 그룹")
         cmd.add_argument("--task", choices=("regression", "classification"), default="regression")
         cmd.add_argument("--folds", type=int, default=5)
-        cmd.add_argument("--alpha", type=float, default=1.0, help="Ridge 정규화 강도")
-        cmd.add_argument("--c", type=float, default=1.0, help="LogisticRegression 정규화 강도의 역수")
     args = parser.parse_args()
     try:
         if args.command == "predict":
