@@ -70,45 +70,38 @@ def extract(df, batch_size, device):
     model = model.to(device).eval()
     convert = alphabet.get_batch_converter()
 
-    def encode(windows, offsets, need_probs):
+    def encode(windows, offsets):
         # <cls>가 앞에 붙으므로 residue offset에 1을 더함. Padding 구간은 선택하지 않음.
         _, _, tokens = convert(windows)
         result = model(tokens.to(device), repr_layers=[33], return_contacts=False)
         rows = torch.arange(len(windows), device=device)
         sites = torch.tensor(offsets, device=device) + 1
-        vectors = result["representations"][33][rows, sites].float().cpu().numpy()
-        if need_probs:
-            logits = result["logits"][rows, sites]
-            return vectors, logits.float().log_softmax(-1).cpu().numpy()
-        return vectors, None
+        return result["representations"][33][rows, sites].float().cpu().numpy()
 
     positions = sorted(df.pos.unique())
     cache = {}
     n = len(df)
     embeddings = np.empty((n, len(EMBEDDING)), dtype=np.float32)
-    llr = np.empty(n, dtype=np.float32)
     cosine = np.empty(n, dtype=np.float32)
     with torch.inference_mode():
         # 한 위치에 여러 치환이 있어도 동일한 WT window는 한 번만 인코딩함.
         for start in tqdm(range(0, len(positions), batch_size), desc="WT positions"):
             batch = positions[start:start + batch_size]
             windows, offsets = zip(*(get_window_seq(reference, p) for p in batch))
-            vectors, probs = encode([(str(p), w) for p, w in zip(batch, windows)], offsets, True)
-            cache.update({p: (v, lp) for p, v, lp in zip(batch, vectors, probs)})
+            vectors = encode([(str(p), w) for p, w in zip(batch, windows)], offsets)
+            cache.update(zip(batch, vectors))
         for start in tqdm(range(0, n, batch_size), desc="Mutants"):
             batch = df.iloc[start:start + batch_size]
             windows, offsets = zip(*(get_window_seq(r.mutated_sequence, r.pos)
                                      for r in batch.itertuples()))
-            vectors, _ = encode(list(zip(batch.mutant, windows)), offsets, False)
+            vectors = encode(list(zip(batch.mutant, windows)), offsets)
             embeddings[start:start + len(batch)] = vectors
             for i, row, mutant in zip(range(start, start + len(batch)), batch.itertuples(), vectors):
-                wild, lp = cache[row.pos]
-                # 원본과 동일한 unmasked WT-marginal 점수. WT 잔기가 보이는 입력을 사용함.
-                llr[i] = lp[alphabet.get_idx(row.mut)] - lp[alphabet.get_idx(row.wt)]
+                wild = cache[row.pos]
                 cosine[i] = np.dot(wild, mutant) / (np.linalg.norm(wild) * np.linalg.norm(mutant) + 1e-8)
 
     meta = ["mutant", "wt", "pos", "mut", *[k for k in ("DMS_score", "DMS_score_bin") if k in df]]
-    return pd.concat([df[meta].assign(esm_llr=llr, esm_cos_sim=cosine),
+    return pd.concat([df[meta].assign(esm_cos_sim=cosine),
                       pd.DataFrame(embeddings, columns=EMBEDDING)], axis=1)
 
 

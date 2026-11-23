@@ -1,5 +1,6 @@
 """변이 식별자를 검증하고 선택한 feature block을 고정된 순서로 조립함."""
 
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -9,15 +10,25 @@ import pandas as pd
 AA = "ACDEFGHIKLMNPQRSTVWY"
 VARIANT = rf"^([{AA}])([1-9][0-9]*)([{AA}])$"
 EMBEDDING = [f"esm_emb_{i}" for i in range(1280)]
-ESM = [*EMBEDDING, "esm_llr", "esm_cos_sim"]
+ESM = [*EMBEDDING, "esm_cos_sim"]
 
-# Kyte–Doolittle hydropathicity. 큰 값일수록 소수성이 강함.
-HYDROPATHY = dict(zip(AA, [
-    1.8, 2.5, -3.5, -3.5, 2.8, -0.4, -3.2, 4.5, -3.9, 3.8,
-    1.9, -3.5, -1.6, -3.5, -4.5, -0.8, -0.7, 4.2, -0.9, -1.3,
-]))
-GROUPS = ("esm", "embedding", "llr", "cosine", "charge", "hydropathy",
-          "hbond", "polarity", "plddt")
+CHARGE_PH = 7.0
+CHARGE_PK_SCALE = "Lehninger"
+HYDROPATHY_SCALE = "KyteDoolittle"
+CANDIDATES = ("charge", "hydropathy", "hbond", "plddt")
+GROUPS = ("esm", "embedding", "cosine", *CANDIDATES)
+
+
+@lru_cache(maxsize=2)
+def peptide_scale(group):
+    """peptides의 단일 잔기 descriptor를 캐싱함. 구조/수소결합은 이 API의 대상이 아님."""
+    from peptides import Peptide
+
+    if group == "charge":
+        return {a: Peptide(a).charge(pH=CHARGE_PH, pKscale=CHARGE_PK_SCALE) for a in AA}
+    if group == "hydropathy":
+        return {a: Peptide(a).hydrophobicity(scale=HYDROPATHY_SCALE) for a in AA}
+    raise ValueError(f"peptides로 계산하는 feature가 아님: {group}")
 
 
 def read_table(path):
@@ -93,12 +104,12 @@ def design_matrix(df, groups):
     """정답이나 pos를 자동 선택하지 않음. 허용 목록에 속한 수치 열만 X에 넣음."""
     if not groups or set(groups) - set(GROUPS) or len(groups) != len(set(groups)):
         raise ValueError(f"feature 이름 또는 중복을 확인할 것: {groups}")
-    if "esm" in groups and set(groups) & {"embedding", "llr", "cosine"}:
-        raise ValueError("esm에는 embedding, llr, cosine이 이미 포함됨")
+    if "esm" in groups and set(groups) & {"embedding", "cosine"}:
+        raise ValueError("esm에는 embedding, cosine이 이미 포함됨")
 
     blocks = []
     for group in groups:
-        esm_columns = {"esm": ESM, "embedding": EMBEDDING, "llr": ["esm_llr"],
+        esm_columns = {"esm": ESM, "embedding": EMBEDDING,
                        "cosine": ["esm_cos_sim"], "plddt": ["plddt"]}
         if group in esm_columns:
             columns = esm_columns[group]
@@ -108,15 +119,13 @@ def design_matrix(df, groups):
             blocks.append(df[columns])
             continue
 
-        # 속성별 Mut - WT 차이를 사용함. 수소결합은 donor와 acceptor를 따로 계산함.
-        # 집합의 소속 여부는 0/1, charge는 간단한 정수 근사치로 코딩함.
-        if group == "hydropathy":
-            scales = {"hydropathy": HYDROPATHY}
-        elif group == "charge":
-            scales = {"charge": {a: int(a in "KR") - int(a in "DE") for a in AA}}
-        elif group == "polarity":
-            scales = {"polarity": {a: int(a in "DENQHKRSTY") for a in AA}}
+        # 치환 잔기의 Mut - WT 차이. 전하와 소수성은 peptides에서 계산함.
+        if group in {"charge", "hydropathy"}:
+            # 전하 정의가 달라졌으므로 기존 정수 전하로 학습한 모델과 열 이름을 구분함.
+            name = "charge_ph7_lehninger" if group == "charge" else "hydropathy"
+            scales = {name: peptide_scale(group)}
         else:
+            # 기존의 donor/acceptor 성향 근사이며 peptides 값이나 실제 결합 수가 아님.
             scales = {"donor": {a: int(a in "RKWNQHSTY") for a in AA},
                       "acceptor": {a: int(a in "DENQHSTY") for a in AA}}
         for name, lookup in scales.items():

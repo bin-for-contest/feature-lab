@@ -16,7 +16,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, roc_auc_sco
 from sklearn.model_selection import GroupKFold
 from sklearn.pipeline import make_pipeline
 
-from features import GROUPS, add_structure, design_matrix, read_table, variants
+from features import CANDIDATES, GROUPS, add_structure, design_matrix, read_table, variants
 
 
 def write_json(path, obj):
@@ -153,7 +153,7 @@ def main():
         if name == "predict":
             cmd.add_argument("--model", required=True, type=Path)
             continue
-        candidates = GROUPS if name == "train" else ("charge", "hydropathy", "hbond", "polarity", "plddt")
+        candidates = GROUPS if name == "train" else CANDIDATES
         cmd.add_argument("--features", nargs="+", choices=candidates, required=name == "compare",
                          default=["esm"], help="공백으로 구분한 feature 그룹")
         cmd.add_argument("--task", choices=("regression", "classification"), default="regression")
