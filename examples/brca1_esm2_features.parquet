@@ -1,0 +1,4 @@
+mutant wt  pos mut  DMS_score  DMS_score_bin    esm_llr  esm_cos_sim
+0    M1I  M    1   I  -2.502128              0 -11.398861     0.965501
+1    M1V  M    1   V  -2.025645              0 -10.931433     0.952311
+2    M1T  M    1   T  -1.656569              0 -10.665012     0.976162

@@ -1,0 +1,6 @@
+Shape (rows, cols): (1837, 4)
+Columns: ['mutant', 'mutated_sequence', 'DMS_score', 'DMS_score_bin']
+mutant  DMS_score  DMS_score_bin
+0    M1I  -2.502128              0
+1    M1V  -2.025645              0
+2    M1T  -1.656569              0

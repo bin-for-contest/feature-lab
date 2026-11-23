@@ -245,6 +245,27 @@ joblib 모델은 직접 만든 신뢰할 수 있는 파일을 같은 호환 환�
 
 아래 파일명은 예시이며 실제 데이터 경로로 바꾼다. 명령은 `feature-lab`에서 실행한다.
 
+### embedding 추출
+
+```powershell
+python extract_esm2_embeddings.py
+```
+
+### experiment.py
+- train 모드 : 한 번에 하나의 feautre로만 학습됨
+- compare 모드: 조합마다 모델을 따로 학습하고(없음+각각+전체) 예측 성능을 비교하는 모드
+- predict 모드: 이미 학습된 모델로 기능 점수 예측 한 번에 하나의 feature로만 predict
+
+  `--features charge hydropathy plddt` 이면
+  | 모델 | 사용하는 입력 |
+  |---|---|
+  | 기준 모델 | ESM |
+  | 모델 2 | ESM + 전하 |
+  | 모델 3 | ESM + 소수성 |
+  | 모델 4 | ESM + pLDDT |
+  | 모델 5 | ESM + 전하 + 소수성 + pLDDT |
+  을 비교함
+### 예시
 ```powershell
 # 1. ESM 추출도 할 경우 기본 학습 패키지와 함께 설치
 python -m pip install -r requirements-esm.txt
