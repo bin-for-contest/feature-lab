@@ -1,0 +1,8 @@
+numpy>=1.24,<3
+pandas>=2.0,<4
+pyarrow>=12
+scipy>=1.10,<2
+scikit-learn>=1.3,<2
+lightgbm>=4.0,<5
+peptides>=0.5,<0.6
+joblib>=1.2,<2

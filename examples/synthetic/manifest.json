@@ -1,0 +1,18 @@
+{
+  "synthetic": true,
+  "seed": 20261123,
+  "sequence_length": 80,
+  "train_rows": 192,
+  "prediction_rows": 48,
+  "train_positions": [
+    1,
+    48
+  ],
+  "prediction_positions": [
+    49,
+    60
+  ],
+  "embedding_source": "random vectors with 1280 dimensions; not ESM-2",
+  "score_source": "artificial chemistry-based rule plus noise; not Findlay data",
+  "confidence_source": "artificial numbers; not AlphaFold predictions"
+}
