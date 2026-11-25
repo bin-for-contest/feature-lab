@@ -1,4 +1,4 @@
-/__pycache__
+__pycache__/
 
 # 합성 예제로 실행한 학습 모델과 예측 결과
 examples/synthetic/results*/
