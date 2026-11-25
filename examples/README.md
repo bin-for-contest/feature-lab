@@ -33,27 +33,27 @@ BRCA1 서열, Findlay 실험 점수, ESM-2 임베딩, AlphaFold 예측 결과가
 python -m pip install -r requirements.txt
 ```
 
-ESM과 추가 후보 네 가지를 회귀로 비교한다. 기본 ESM + 개별 후보 4개 + 전체 조합,
-총 6개 조합을 같은 3-fold로 평가한다.
+이 예제에는 CIF가 없으므로 전하·소수성·수소결합 후보 세 가지를 회귀로 비교한다.
+기본 ESM + 개별 후보 3개 + 전체 조합, 총 5개 조합을 같은 3-fold로 평가한다.
 
 ```powershell
-python experiment.py compare --input examples/synthetic/esm_features.parquet --features charge hydropathy hbond plddt --structure examples/synthetic/confidence.json --task regression --folds 3 --out examples/synthetic/results_compare
+python experiment.py compare --input examples/synthetic/esm_features.parquet --features charge hydropathy hbond --task regression --folds 3 --out examples/synthetic/results_compare
 ```
 
 분류 모델 하나를 학습하고 교차검증한다.
 
 ```powershell
-python experiment.py train --input examples/synthetic/esm_features.parquet --features esm charge hydropathy hbond plddt --structure examples/synthetic/confidence.json --task classification --folds 3 --out examples/synthetic/results_classification
+python experiment.py train --input examples/synthetic/esm_features.parquet --features esm charge hydropathy hbond --task classification --folds 3 --out examples/synthetic/results_classification
 ```
 
 회귀 비교에서 저장한 전체 feature 조합 모델로 새 변이 48개의 점수를 예측한다.
 
 ```powershell
-python experiment.py predict --input examples/synthetic/prediction_features.parquet --model examples/synthetic/results_compare/esm+charge+hydropathy+hbond+plddt/model.joblib --structure examples/synthetic/confidence.json --out examples/synthetic/results_prediction/predictions.csv
+python experiment.py predict --input examples/synthetic/prediction_features.parquet --model examples/synthetic/results_compare/esm+charge+hydropathy+hbond/model.joblib --out examples/synthetic/results_prediction/predictions.csv
 ```
 
 분류 모델로 확률을 예측하려면 위 명령의 `--model`을
-`examples/synthetic/results_classification/esm+charge+hydropathy+hbond+plddt/model.joblib`로,
+`examples/synthetic/results_classification/esm+charge+hydropathy+hbond/model.joblib`로,
 `--out`을 `examples/synthetic/results_prediction/classification_probabilities.csv`로 바꾼다.
 
 이미 생성된 출력 경로는 덮어쓰지 않는다. 반복 실험은 `--out`에 새 경로를 지정한다.
@@ -62,3 +62,8 @@ python experiment.py predict --input examples/synthetic/prediction_features.parq
 실제 ESM 추출기를 시험하고 싶다면 `synthetic/variants.csv`를 입력할 수 있지만,
 별도로 `requirements-esm.txt` 설치 및 ESM 가중치 로드가 필요하다.
 일반적인 train/compare/predict 확인에는 포함된 Parquet를 바로 사용하면 된다.
+
+새 `structure` 후보는 SASA·주변 잔기 수·pLDDT의 세 열을 묶는다. 이 예제의
+confidence JSON에는 좌표가 없으므로 구조 그룹 전체를 계산할 수 없다.
+구조 그룹 실험에는 같은 참조 서열의 WT CIF 또는 미리 계산한 구조 표가 필요하다.
+JSON을 이용한 기존 pLDDT 단독 실험은 `train --features esm plddt --structure ...`로 가능하다.

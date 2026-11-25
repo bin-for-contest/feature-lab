@@ -9,7 +9,7 @@ ESM-2 feature에 추가 특성을 결합하고 LightGBM으로 Findlay DMS 기능
 | --- | --- |
 | `charge` | PyPI `peptides.Peptide.charge(pH=7.0, pKscale="Lehninger")`의 Mut − WT 차이 |
 | `hydropathy` | `peptides.Peptide.hydrophobicity(scale="KyteDoolittle")`의 Mut − WT 차이 |
-| `plddt` | AlphaFold confidence JSON, WT PDB 또는 `pos,plddt` 표에서 가져온 위치별 예측 신뢰도 |
+| `structure` | WT CIF에서 계산한 SASA, Cα 기준 8 Å 이내 주변 잔기 수, pLDDT를 묶은 3개 열 |
 | `hbond` | 기존 잔기별 donor/acceptor 소속 여부의 Mut − WT 차이. 실제 수소결합 수가 아닌 근사치 |
 
 전하와 소수성은 서로 다른 특성이므로 별도 후보로 비교한다. `peptides`는 단일 잔기에
@@ -28,7 +28,9 @@ python experiment.py compare --input brca1_esm2_features.parquet --features char
 ```
 
 ESM-2 추출까지 실행하려면 `requirements-esm.txt`를 설치한다. 구조 후보를 비교하려면
-`--features`에 `plddt`를 추가하고 `--structure`로 AlphaFold confidence JSON, WT PDB 또는 위치별 표를 지정한다.
+`--features`에 `structure`를 추가하고 `--structure`로 AlphaFold WT CIF/mmCIF를 지정한다.
+SASA·주변 잔기 수·pLDDT를 각각 별도 열로 유지하면서 하나의 후보 그룹으로 비교한다.
+confidence JSON만으로는 좌표가 없어 구조 그룹 전체를 만들 수 없다.
 기본 `esm`에는 임베딩 1,280개와 코사인 유사도, 총 1,281개 feature가 포함된다.
 `esm_llr`은 추출·학습에서 제외한다. 기존 입력 파일에 이 열이 남아 있어도 사용하지 않는다.
 비교는 기본 ESM, 각 후보를 하나씩 추가한 조합, 선택한 후보를 모두 추가한 조합을 실행한다.
@@ -44,6 +46,8 @@ LLR을 포함해 학습한 기존 ESM 모델은 새 feature 구성으로 다시 
 feature-lab/                         현재 실험을 실행하는 프로젝트
     extract_esm2_embeddings.py         서열 검증, ESM-2 feature 추출 CLI
     features.py                       표 읽기, 변이/구조 검증, feature 행렬 생성
+    parse_cif.py                      mmCIF 전체 사전 및 원자별 표 파싱
+    structure_features.py             WT CIF에서 위치별 구조 feature 계산
     experiment.py                     LightGBM 학습, 조합 비교, 저장 모델 예측 CLI
     requirements.txt                  학습/비교에 필요한 패키지
     requirements-esm.txt              기본 패키지 + ESM-2 추출 패키지
@@ -58,7 +62,7 @@ feature-lab/                         현재 실험을 실행하는 프로젝트
 
 1. 변이 식별자와 서열을 검증한다.
 2. 고정된 ESM-2로 변이 위치의 벡터와 코사인 유사도를 추출해 파일로 저장한다.
-3. 저장된 표에 선택한 잔기 속성 차이와 선택적 pLDDT를 결합한다.
+3. 저장된 표에 선택한 잔기 속성 차이와 선택적 구조 feature를 결합한다.
 4. 위치별 교차검증으로 LightGBM의 OOF 예측과 성능을 계산한다.
 5. 전체 데이터로 최종 모델을 다시 학습해 저장한다.
 6. 새 변이에는 같은 규칙으로 feature를 만들고 저장 모델로 예측한다.
@@ -80,7 +84,9 @@ Y로 바꾼 변이다. 여러 단백질이나 isoform을 같은 표에 섞는 �
 | `DMS_score_bin` | 입력에 제공된 0/1 정답 | 분류 학습/평가 |
 | `esm_emb_0` ~ `esm_emb_1279` | 변이 위치의 ESM 벡터 성분 | ESM feature를 선택한 학습/예측 |
 | `esm_cos_sim` | WT와 Mut 잔기 벡터의 방향 유사도 | `esm` 또는 `cosine` 그룹 선택 시 |
-| `plddt` | 위치별 WT AlphaFold 예측 신뢰도 | `plddt` 선택 시. 구조 파일로 추가 가능 |
+| `sasa` | WT 잔기의 용매 접근 표면적(Å²) | `structure` 선택 시 |
+| `neighbor_count` | Cα 기준 8 Å 이내 다른 WT 잔기 수 | `structure` 선택 시 |
+| `plddt` | 위치별 WT AlphaFold 예측 신뢰도 | `structure` 또는 호환용 `plddt` 선택 시 |
 
 추론에는 정답이 필요 없다. 다만 새 서열의 ESM feature는 먼저 추출해야 한다.
 추출 결과에는 `mutated_sequence`를 남기지 않고 식별자, 선택적 정답, 수치 feature만 저장한다.
@@ -128,7 +134,7 @@ CUDA가 가능하면 GPU를, 그렇지 않으면 CPU를 선택한다.
 | `variants()` | 치환 형식, 메타데이터 일치, 중복, 위치별 WT 일관성 검사 |
 | `peptide_scale()` | peptides로 20개 잔기의 전하/소수성을 계산하고 캐싱 |
 | `read_confidence_json()` | AlphaFold confidence JSON의 두 배열을 `pos,plddt` 표로 변환 |
-| `add_structure()` | JSON/PDB/표의 위치별 pLDDT를 원래 변이 행에 매핑 |
+| `add_structure()` | CIF에서 구조 feature 계산 또는 JSON/PDB/표 읽기 후 변이 위치별 매핑 |
 | `design_matrix()` | 지정한 그룹 순서대로 수치 feature를 연결하고 값 검증 |
 
 전하와 소수성은 `property(Mut) - property(WT)`를 사용한다.
@@ -147,7 +153,28 @@ Mut − WT 차이를 낸다. 따라서 `delta_donor`, `delta_acceptor`는 각각
 `confidenceCategory`는 사용하지 않는다. JSON에는 WT 문자가 없으므로 단백질/isoform의
 아미노산 일치는 확인할 수 없으며, 실험과 같은 참조 서열의 confidence 파일을 사용해야 한다.
 
-PDB를 입력하면 첫 모델의 chain A에서 Cα 원자 하나씩 읽고, AlphaFold PDB의
+`structure_features.calculate_structure_features()`는 CIF 첫 모델의 label_asym_id='A'에서
+표준 아미노산의 비수소 ATOM 좌표를 사용한다. 잔기 번호는 label_seq_id이며 WT 문자도
+변이 표와 대조한다. 원자의 기본 위치 또는 A 대체 위치를 선택하며 중복 원자는 거부한다.
+잔기마다 Cα가 정확히 하나 있어야 한다.
+
+- `sasa`: 선택한 체인 전체에서 Shrake–Rupley로 계산한 잔기별 면적(Å²).
+  탐침 반지름 1.4 Å, 원자 표면 샘플 100개를 사용한다. 물·다른 체인·금속은 포함하지 않는다.
+- `neighbor_count`: Cα 사이 거리가 8 Å 이하인 다른 잔기의 수. 자기 자신은 제외하고
+  서열상 바로 이웃한 잔기는 포함한다. 원자가 아니라 서로 다른 잔기를 센다.
+- `plddt`: 같은 WT 잔기의 Cα에 기록된 B_iso_or_equiv 값.
+
+세 값은 WT 구조의 환경 정보이므로 같은 위치의 여러 치환에는 동일하게 매핑한다.
+SASA는 면적이며 RSA로 정규화하지 않는다. 구조가 불확실한 영역의 기하학적 feature는
+예측 오차를 포함할 수 있다. 기능 부위 거리나 실제 수소결합 계산은 이 그룹에 포함하지 않는다.
+학습/비교 실행 시 한 번 계산해 모든 fold와 조합에서 재사용한다. 추론 시에도 같은 정의를 쓴다.
+
+기존 pLDDT 단독 모델을 위해 `train --features plddt`와 저장 모델의 `predict`는 유지한다.
+`compare`의 후보는 `charge`, `hydropathy`, `hbond`, `structure`다.
+`structure`와 `plddt`를 동시에 선택하면 같은 열을 중복 사용하므로 거부한다.
+미리 계산한 표를 쓸 경우 `pos,sasa,neighbor_count,plddt` 열을 제공하면 되고 `wt`는 선택 사항이다.
+
+PDB를 입력하면 기존 호환 경로에서 첫 모델의 chain A Cα 원자만 읽고, AlphaFold PDB의
 B-factor 칸을 pLDDT로 해석한다. 일반 실험 PDB의 B-factor와 같은 의미로 취급하면 안 된다.
 잔기 번호와 WT 문자를 검사하며 삽입 코드나 모호한 위치 매핑은 거부한다.
 구조 표는 중복 없는 양의 정수 `pos`와 `plddt`가 필요하고 `wt`는 선택 사항이다.
@@ -161,9 +188,10 @@ B-factor 칸을 pLDDT로 해석한다. 일반 실험 PDB의 B-factor와 같은 �
 | `charge` | 1 | `delta_charge_ph7_lehninger` |
 | `hydropathy` | 1 | `delta_hydropathy` |
 | `hbond` | 2 | `delta_donor`, `delta_acceptor` |
-| `plddt` | 1 | `plddt` |
+| `structure` | 3 | `sasa`, `neighbor_count`, `plddt` |
+| `plddt` | 1 | 기존 모델 호환/단독 train용 `plddt` |
 
-기본 ESM과 추가 후보 네 가지를 모두 쓰면 총 1,286차원이다.
+기본 ESM과 추가 후보 네 가지를 모두 쓰면 총 1,288차원이다.
 `esm`과 `embedding`/`cosine`을 동시에 선택해 중복 열을 만드는 것은 허용하지 않는다.
 
 ## experiment.py: 학습, 비교, 예측
@@ -256,14 +284,14 @@ python extract_esm2_embeddings.py
 - compare 모드: 조합마다 모델을 따로 학습하고(없음+각각+전체) 예측 성능을 비교하는 모드
 - predict 모드: 이미 학습된 모델로 기능 점수 예측 한 번에 하나의 feature로만 predict
 
-  `--features charge hydropathy plddt` 이면
+  `--features charge hydropathy structure` 이면
   | 모델 | 사용하는 입력 |
   |---|---|
   | 기준 모델 | ESM |
   | 모델 2 | ESM + 전하 |
   | 모델 3 | ESM + 소수성 |
-  | 모델 4 | ESM + pLDDT |
-  | 모델 5 | ESM + 전하 + 소수성 + pLDDT |
+  | 모델 4 | ESM + 구조(SASA·주변 잔기 수·pLDDT) |
+  | 모델 5 | ESM + 전하 + 소수성 + 구조 |
   을 비교함
 ### 예시
 ```powershell
@@ -281,8 +309,8 @@ python experiment.py train --input brca1_features.parquet --features esm charge 
 # 4. 기본 ESM과 전하/소수성/수소결합 후보를 비교
 python experiment.py compare --input brca1_features.parquet --features charge hydropathy hbond --out results_compare
 
-# 5. AlphaFold confidence JSON으로 구조 후보도 포함해 네 후보를 비교
-python experiment.py compare --input brca1_features.parquet --features charge hydropathy hbond plddt --structure AF-P38398-F1-confidence_v6.json --out results_structure
+# 5. AlphaFold WT CIF로 구조 후보도 포함해 네 후보를 비교
+python experiment.py compare --input brca1_features.parquet --features charge hydropathy hbond structure --structure AF-P38398-F1-model_v6.cif --out results_structure
 
 # 6. 새 변이에도 ESM 추출을 먼저 한 뒤 저장된 회귀 모델로 예측
 python experiment.py predict --input new_variants_features.parquet --model results_train/esm+charge/model.joblib --out predictions.csv

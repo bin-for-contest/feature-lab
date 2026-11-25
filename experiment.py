@@ -132,6 +132,9 @@ def run(args):
         raise ValueError("이진 분류에는 0과 1 라벨이 모두 필요함")
     if not 2 <= args.folds <= df.pos.nunique():
         raise ValueError("--folds는 2 이상이며 고유 pos 수 이하여야 함")
+    if "structure" in args.features:
+        # JSON만 준 경우처럼 구조 열이 부족하면 baseline 학습을 시작하기 전에 알려준다.
+        design_matrix(df, ["structure"])
     # C39Y와 C39A처럼 같은 위치의 치환을 학습/검증으로 나눠 넣지 않는다.
     # 따라서 평가는 이 단백질의 '보지 않은 위치'에 대한 예측을 측정한다.
     # 같은 실행의 모든 조합이 같은 행·같은 fold 인덱스를 재사용한다.
@@ -208,7 +211,8 @@ def main():
         cmd = commands.add_parser(name)
         cmd.add_argument("--input", required=True, type=Path, help="변이 단위 CSV/TSV/Parquet")
         cmd.add_argument("--out", required=True, type=Path, help="새 결과 폴더(predict는 CSV 파일)")
-        cmd.add_argument("--structure", type=Path, help="AlphaFold confidence JSON, WT PDB 또는 pos,plddt 표")
+        cmd.add_argument("--structure", type=Path,
+                         help="structure 그룹: AlphaFold WT CIF 또는 위치별 구조 표. JSON/PDB는 pLDDT 단독용")
         if name == "predict":
             # 예측 작업의 task와 feature는 모델 파일 안에 있으므로 --model만 추가한다.
             cmd.add_argument("--model", required=True, type=Path)
