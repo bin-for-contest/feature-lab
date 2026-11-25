@@ -20,7 +20,7 @@ RESIDUE_CODES = dict(zip(
 ))
 
 
-def calculate_structure_features(path):
+def calculate_structure_features(path, *, include_hbond=False):
     """WT CIF에서 pos, wt, sasa, neighbor_count, plddt 표를 반환한다.
 
     SASA는 선택한 체인 전체의 비수소 원자로 계산한 잔기별 노출 면적(Å²)이다.
@@ -96,4 +96,9 @@ def calculate_structure_features(path):
     # 검색 결과에는 자기 자신도 포함되므로 1을 뺀다.
     table["neighbor_count"] = cKDTree(coordinates).query_ball_point(
         coordinates, NEIGHBOR_RADIUS, return_length=True) - 1
-    return table[["pos", "wt", "sasa", "neighbor_count", "plddt"]]
+    table = table[["pos", "wt", "sasa", "neighbor_count", "plddt"]]
+    if include_hbond:
+        from hbond import HBOND_COLUMNS, sidechain_hbond_counts
+
+        table[HBOND_COLUMNS] = sidechain_hbond_counts(chain)
+    return table

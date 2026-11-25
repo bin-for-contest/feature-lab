@@ -64,7 +64,8 @@ def main():
     train = make_variants(reference, range(1, 49))
     prediction = make_variants(reference, range(49, 61))
     parsed = variants(train)
-    chemistry = design_matrix(parsed, ["charge", "hydropathy", "hbond"])
+    # 합성 데이터의 정답 생성 규칙은 기존의 서열 기반 donor/acceptor 차이를 사용한다.
+    chemistry = design_matrix(parsed, ["charge", "hydropathy", "hbond"], legacy_hbond=True)
     local_confidence = confidence[parsed.pos.to_numpy() - 1]
     # 실험 측정값 대신 인위적인 규칙에 작은 잡음을 더한다. 생물학적 의미는 없다.
     score = (0.9 - 0.2 * chemistry.delta_hydropathy.abs().to_numpy()

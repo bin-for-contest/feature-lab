@@ -33,27 +33,27 @@ BRCA1 서열, Findlay 실험 점수, ESM-2 임베딩, AlphaFold 예측 결과가
 python -m pip install -r requirements.txt
 ```
 
-이 예제에는 CIF가 없으므로 전하·소수성·수소결합 후보 세 가지를 회귀로 비교한다.
-기본 ESM + 개별 후보 3개 + 전체 조합, 총 5개 조합을 같은 3-fold로 평가한다.
+이 예제에는 CIF가 없으므로 전하와 소수성 후보를 회귀로 비교한다.
+기본 ESM + 개별 후보 2개 + 전체 조합, 총 4개 조합을 같은 3-fold로 평가한다.
 
 ```powershell
-python experiment.py compare --input examples/synthetic/esm_features.parquet --features charge hydropathy hbond --task regression --folds 3 --out examples/synthetic/results_compare
+python experiment.py compare --input examples/synthetic/esm_features.parquet --features charge hydropathy --task regression --folds 3 --out examples/synthetic/results_compare
 ```
 
 분류 모델 하나를 학습하고 교차검증한다.
 
 ```powershell
-python experiment.py train --input examples/synthetic/esm_features.parquet --features esm charge hydropathy hbond --task classification --folds 3 --out examples/synthetic/results_classification
+python experiment.py train --input examples/synthetic/esm_features.parquet --features esm charge hydropathy --task classification --folds 3 --out examples/synthetic/results_classification
 ```
 
 회귀 비교에서 저장한 전체 feature 조합 모델로 새 변이 48개의 점수를 예측한다.
 
 ```powershell
-python experiment.py predict --input examples/synthetic/prediction_features.parquet --model examples/synthetic/results_compare/esm+charge+hydropathy+hbond/model.joblib --out examples/synthetic/results_prediction/predictions.csv
+python experiment.py predict --input examples/synthetic/prediction_features.parquet --model examples/synthetic/results_compare/esm+charge+hydropathy/model.joblib --out examples/synthetic/results_prediction/predictions.csv
 ```
 
 분류 모델로 확률을 예측하려면 위 명령의 `--model`을
-`examples/synthetic/results_classification/esm+charge+hydropathy+hbond/model.joblib`로,
+`examples/synthetic/results_classification/esm+charge+hydropathy/model.joblib`로,
 `--out`을 `examples/synthetic/results_prediction/classification_probabilities.csv`로 바꾼다.
 
 이미 생성된 출력 경로는 덮어쓰지 않는다. 반복 실험은 `--out`에 새 경로를 지정한다.

@@ -10,7 +10,7 @@ ESM-2 feature에 추가 특성을 결합하고 LightGBM으로 Findlay DMS 기능
 | `charge` | PyPI `peptides.Peptide.charge(pH=7.0, pKscale="Lehninger")`의 Mut − WT 차이 |
 | `hydropathy` | `peptides.Peptide.hydrophobicity(scale="KyteDoolittle")`의 Mut − WT 차이 |
 | `structure` | WT CIF에서 계산한 SASA, Cα 기준 8 Å 이내 주변 잔기 수, pLDDT를 묶은 3개 열 |
-| `hbond` | 기존 잔기별 donor/acceptor 소속 여부의 Mut − WT 차이. 실제 수소결합 수가 아닌 근사치 |
+| `hbond` | WT CIF에서 변이 위치의 곁사슬이 다른 잔기에 수소결합을 제공하거나 받을 수 있는 원자쌍 수, 역할별 2개 열 |
 
 전하와 소수성은 서로 다른 특성이므로 별도 후보로 비교한다. `peptides`는 단일 잔기에
 적용하며, 값은 전체 단백질의 평균 소수성이나 총전하가 아닌 치환 잔기의 차이다.
@@ -142,9 +142,16 @@ CUDA가 가능하면 GPU를, 그렇지 않으면 CPU를 선택한다.
 이 값은 단백질 전체의 평균 소수성 변화량이 아니라 치환 잔기 자체의 속성 차이다.
 전하도 pH 7, Lehninger 척도에서 단일 잔기에 계산한 값의 차이를 사용한다.
 
-수소결합은 donor 집합과 acceptor 집합의 소속 여부를 각각 0/1로 표시하고
-Mut − WT 차이를 낸다. 따라서 `delta_donor`, `delta_acceptor`는 각각 -1/0/1이다.
-실제 3차원 구조에서 생기거나 끊어진 수소결합을 측정하는 값은 아니다.
+`hbond`는 WT CIF의 첫 모델에서 체인 A의 서로 다른 두 잔기 사이를 검사한다.
+일반적인 이온화 상태에서 donor/acceptor가 될 수 있는 N/O 원자쌍 중 거리가 2.4~3.5 Å이고,
+각 끝에서 바로 결합된 중원자 방향과 상대 원자 방향이 모두 90° 이상 벌어진 쌍을 센다.
+수소 좌표가 없는 구조에 적용하기 위해 정한 기하학적 근사다. [중원자 거리·각도를 사용한 연구](https://pmc.ncbi.nlm.nih.gov/articles/PMC2253219/)
+
+변이 위치에서는 곁사슬만 세며 상대 잔기는 주사슬·곁사슬 모두 허용한다.
+donor인 후보 수와 acceptor인 후보 수를 따로 기록한다. 히스티딘과 하이드록실처럼
+두 역할이 가능한 경우에는 각 방향이 각각 후보가 될 수 있다. 물과 황을 매개로 한 상호작용은 제외한다.
+두 열은 WT 환경을 나타내므로 같은 위치의 모든 치환이 같은 값을 받는다.
+기존 모델에 `delta_donor`, `delta_acceptor`가 저장돼 있으면 예측 시 기존의 Mut − WT 규칙을 사용한다.
 
 `AF-P38398-F1-confidence_v6.json` 같은 AlphaFold confidence JSON을 직접 입력할 수 있다.
 `residueNumber`를 `pos`, `confidenceScore`를 `plddt`로 연결한다. 두 배열은 비어 있지 않고
@@ -177,7 +184,7 @@ SASA는 면적이며 RSA로 정규화하지 않는다. 구조가 불확실한 �
 PDB를 입력하면 기존 호환 경로에서 첫 모델의 chain A Cα 원자만 읽고, AlphaFold PDB의
 B-factor 칸을 pLDDT로 해석한다. 일반 실험 PDB의 B-factor와 같은 의미로 취급하면 안 된다.
 잔기 번호와 WT 문자를 검사하며 삽입 코드나 모호한 위치 매핑은 거부한다.
-구조 표는 중복 없는 양의 정수 `pos`와 `plddt`가 필요하고 `wt`는 선택 사항이다.
+구조 표에는 중복 없는 양의 정수 `pos`와 선택한 그룹의 열을 넣는다. `wt`를 넣으면 변이 표와 대조한다.
 최종 feature에 결측/무한값이 있거나 pLDDT가 0~100 범위 밖이면 학습 전에 중단한다.
 
 | feature 그룹 | 차원 | 생성하는 열 |
@@ -187,7 +194,7 @@ B-factor 칸을 pLDDT로 해석한다. 일반 실험 PDB의 B-factor와 같은 �
 | `cosine` | 1 | `esm_cos_sim`만 |
 | `charge` | 1 | `delta_charge_ph7_lehninger` |
 | `hydropathy` | 1 | `delta_hydropathy` |
-| `hbond` | 2 | `delta_donor`, `delta_acceptor` |
+| `hbond` | 2 | `wt_sidechain_hbond_donor_count`, `wt_sidechain_hbond_acceptor_count` |
 | `structure` | 3 | `sasa`, `neighbor_count`, `plddt` |
 | `plddt` | 1 | 기존 모델 호환/단독 train용 `plddt` |
 
@@ -307,7 +314,7 @@ python extract_esm2_embeddings.py --input brca1.csv --output brca1_features.parq
 python experiment.py train --input brca1_features.parquet --features esm charge --folds 5 --out results_train
 
 # 4. 기본 ESM과 전하/소수성/수소결합 후보를 비교
-python experiment.py compare --input brca1_features.parquet --features charge hydropathy hbond --out results_compare
+python experiment.py compare --input brca1_features.parquet --features charge hydropathy hbond --structure AF-P38398-F1-model_v6.cif --out results_compare
 
 # 5. AlphaFold WT CIF로 구조 후보도 포함해 네 후보를 비교
 python experiment.py compare --input brca1_features.parquet --features charge hydropathy hbond structure --structure AF-P38398-F1-model_v6.cif --out results_structure
@@ -322,7 +329,7 @@ python experiment.py predict --input new_variants_features.parquet --model resul
 ESM 추출 없이 CLI 흐름만 확인하려면 추가 feature만 선택할 수 있다.
 
 ```powershell
-python experiment.py train --input examples/toy.csv --features hbond --folds 3 --out toy_results
+python experiment.py train --input examples/toy.csv --features charge --folds 3 --out toy_results
 ```
 
 예제처럼 행 수가 작으면 LightGBM이 분할을 만들지 않아 상수 예측이나 빈 Spearman이 나올 수 있다.
