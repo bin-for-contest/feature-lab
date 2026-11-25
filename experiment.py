@@ -119,7 +119,7 @@ def run(args):
     # 이는 학습/평가용 정렬이며 predict 명령은 사용자가 준 입력 순서를 유지한다.
     df = variants(read_table(args.input)).sort_values("mutant").reset_index(drop=True)
     if args.structure:
-        df = add_structure(df, args.structure)
+        df = add_structure(df, args.structure, include_hbond="hbond" in args.features)
     # 회귀의 정답은 Findlay 기능 점수, 분류의 정답은 입력 파일에 제공된 이진 라벨이다.
     # 분류 라벨을 여기서 임의의 임계값으로 새로 만들지는 않는다.
     label = "DMS_score" if args.task == "regression" else "DMS_score_bin"
@@ -132,6 +132,10 @@ def run(args):
         raise ValueError("이진 분류에는 0과 1 라벨이 모두 필요함")
     if not 2 <= args.folds <= df.pos.nunique():
         raise ValueError("--folds는 2 이상이며 고유 pos 수 이하여야 함")
+    structure_groups = [name for name in args.features if name in {"hbond", "structure"}]
+    if structure_groups:
+        # JSON만 준 경우처럼 구조 열이 부족하면 baseline 학습을 시작하기 전에 알려준다.
+        design_matrix(df, structure_groups)
     # C39Y와 C39A처럼 같은 위치의 치환을 학습/검증으로 나눠 넣지 않는다.
     # 따라서 평가는 이 단백질의 '보지 않은 위치'에 대한 예측을 측정한다.
     # 같은 실행의 모든 조합이 같은 행·같은 fold 인덱스를 재사용한다.
@@ -185,11 +189,12 @@ def infer(args):
     """
     # joblib은 동일 환경에서 직접 생성한 모델 파일을 로드하는 용도임.
     saved = joblib.load(args.model)
+    legacy_hbond = {"delta_donor", "delta_acceptor"} <= set(saved["columns"])
     df = variants(read_table(args.input))
     if args.structure:
-        df = add_structure(df, args.structure)
+        df = add_structure(df, args.structure, include_hbond="hbond" in saved["groups"] and not legacy_hbond)
     # 추론 CLI에서 feature를 다시 고르지 않고 학습 시 저장한 조합을 그대로 사용한다.
-    X = design_matrix(df, saved["groups"])
+    X = design_matrix(df, saved["groups"], legacy_hbond=legacy_hbond)
     if X.columns.tolist() != saved["columns"]:
         raise ValueError("현재 feature 순서가 학습 시점과 다름")
     pred = predict(saved["model"], X, saved["task"])
@@ -208,7 +213,8 @@ def main():
         cmd = commands.add_parser(name)
         cmd.add_argument("--input", required=True, type=Path, help="변이 단위 CSV/TSV/Parquet")
         cmd.add_argument("--out", required=True, type=Path, help="새 결과 폴더(predict는 CSV 파일)")
-        cmd.add_argument("--structure", type=Path, help="AlphaFold confidence JSON, WT PDB 또는 pos,plddt 표")
+        cmd.add_argument("--structure", type=Path,
+                         help="hbond/structure 그룹용 AlphaFold WT CIF 또는 위치별 구조 표. JSON/PDB는 pLDDT 단독용")
         if name == "predict":
             # 예측 작업의 task와 feature는 모델 파일 안에 있으므로 --model만 추가한다.
             cmd.add_argument("--model", required=True, type=Path)

@@ -13,6 +13,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from hbond import HBOND_COLUMNS
+
 
 # 허용하는 표준 아미노산 20종. 정규식과 PDB의 3문자 코드 변환에 같은 순서를 쓴다.
 AA = "ACDEFGHIKLMNPQRSTVWY"
@@ -31,8 +33,10 @@ CHARGE_PH = 7.0
 CHARGE_PK_SCALE = "Lehninger"
 HYDROPATHY_SCALE = "KyteDoolittle"
 # compare는 추가 후보만 받는다. train은 ESM의 일부만 쓰는 실험도 허용한다.
-CANDIDATES = ("charge", "hydropathy", "hbond", "plddt")
-GROUPS = ("esm", "embedding", "cosine", *CANDIDATES)
+CANDIDATES = ("charge", "hydropathy", "hbond", "structure")
+# plddt 단독 그룹은 기존 모델의 추론 및 개별 train 실험과의 호환용으로 유지한다.
+GROUPS = ("esm", "embedding", "cosine", *CANDIDATES, "plddt")
+STRUCTURE_COLUMNS = ["sasa", "neighbor_count", "plddt"]
 
 
 @lru_cache(maxsize=2)
@@ -133,16 +137,20 @@ def read_confidence_json(path):
     return table
 
 
-def add_structure(df, path):
-    """AlphaFold confidence JSON, WT PDB 또는 위치별 표에서 pLDDT를 가져온다.
+def add_structure(df, path, *, include_hbond=False):
+    """WT 구조 파일 또는 위치별 표에서 구조 feature를 가져와 변이 표에 연결한다.
 
-    df는 variants()를 통과한 표여야 한다. JSON은 residueNumber/confidenceScore를
-    pos/plddt로 변환하고, PDB는 첫 모델의 chain A만 읽는다. CSV/TSV/Parquet 표는
-    최소 pos, plddt 열이 필요하다. wt 열이 있는 입력은 WT 문자도 함께 대조한다.
+    CIF/mmCIF는 SASA, 주변 잔기 수, pLDDT를 모두 계산한다. JSON과 기존 PDB 경로는
+    pLDDT만 제공하며, CSV/TSV/Parquet는 미리 계산한 구조 열을 포함할 수 있다.
+    df는 variants()를 통과한 표여야 한다. wt 열이 있는 구조 입력은 WT 문자도 대조한다.
     pLDDT는 WT 구조 예측의 신뢰도이며 변이 구조의 변화량이나 좌표 표현이 아니다.
     같은 pos의 여러 치환은 같은 pLDDT를 받는다.
     """
-    if Path(path).suffix.lower() == ".json":
+    if Path(path).suffix.lower() in {".cif", ".mmcif"}:
+        from structure_features import calculate_structure_features
+
+        table = calculate_structure_features(path, include_hbond=include_hbond)
+    elif Path(path).suffix.lower() == ".json":
         # JSON에 제공된 실제 residueNumber로 매핑한다. 배열 인덱스 + 1로 추정하지 않는다.
         table = read_confidence_json(path)
     elif Path(path).suffix.lower() == ".pdb":
@@ -168,10 +176,12 @@ def add_structure(df, path):
         table = pd.DataFrame(residues, columns=["pos", "wt", "plddt"])
     else:
         table = read_table(path)
-    if not {"pos", "plddt"} <= set(table):
-        raise ValueError("구조 표에는 pos, plddt 열이 필요함")
-    if "plddt" in df:
-        raise ValueError("입력에 plddt가 이미 있음. --structure와 중복 지정됨")
+    columns = [name for name in [*STRUCTURE_COLUMNS, *HBOND_COLUMNS] if name in table]
+    if "pos" not in table or not columns:
+        raise ValueError("구조 표에는 pos와 사용할 구조 feature 열이 필요함")
+    overlap = [name for name in columns if name in df]
+    if overlap:
+        raise ValueError(f"입력에 구조 열이 이미 있음. --structure와 중복 지정됨: {overlap}")
     pos = pd.to_numeric(table["pos"], errors="raise")
     if (pos.isna().any() or pos.duplicated().any() or
             not ((pos > 0) & (pos % 1 == 0)).all()):
@@ -183,11 +193,11 @@ def add_structure(df, path):
         if not aligned.eq(df.wt).fillna(False).all():
             raise ValueError("구조 표의 wt 또는 위치가 변이 표와 일치하지 않음")
     # merge로 행을 늘리지 않고 map으로 원래 순서와 개수를 보존한다.
-    # wt 없는 표에서 위치가 누락되면 NaN이 생기며, plddt 선택 시 design_matrix가 거부한다.
-    return df.assign(plddt=df.pos.map(indexed.plddt))
+    # wt 없는 표에서 위치가 누락되면 NaN이 생기며, 해당 그룹 선택 시 design_matrix가 거부한다.
+    return df.assign(**{name: df.pos.map(indexed[name]) for name in columns})
 
 
-def design_matrix(df, groups):
+def design_matrix(df, groups, *, legacy_hbond=False):
     """선택한 그룹 순서대로 float32 feature 행렬 X(N행, D열)를 만든다.
 
     df는 variants()로 검증한 표이며, groups는 ['esm', 'charge'] 같은 목록이다.
@@ -200,17 +210,32 @@ def design_matrix(df, groups):
     # esm은 embedding/cosine을 이미 포함하므로 중복 열을 만들어 학습하지 않게 한다.
     if "esm" in groups and set(groups) & {"embedding", "cosine"}:
         raise ValueError("esm에는 embedding, cosine이 이미 포함됨")
+    if "structure" in groups and "plddt" in groups:
+        raise ValueError("structure에는 plddt가 이미 포함됨")
 
     # DataFrame 블록과 Series 블록을 모아 마지막에 열 방향(axis=1)으로 연결한다.
     blocks = []
     for group in groups:
         esm_columns = {"esm": ESM, "embedding": EMBEDDING,
-                       "cosine": ["esm_cos_sim"], "plddt": ["plddt"]}
+                       "cosine": ["esm_cos_sim"], "structure": STRUCTURE_COLUMNS,
+                       "plddt": ["plddt"]}
+        if group == "hbond" and not legacy_hbond:
+            if not set(HBOND_COLUMNS) <= set(df):
+                raise ValueError("hbond에는 AlphaFold WT CIF(--structure) 또는 위치별 "
+                                 f"수소결합 후보 수 {HBOND_COLUMNS}가 필요함")
+            counts = df[HBOND_COLUMNS].apply(pd.to_numeric, errors="raise")
+            if not (counts.ge(0) & counts.mod(1).eq(0)).fillna(False).all().all():
+                raise ValueError("hbond 후보 수는 0 이상의 정수여야 함")
+            blocks.append(counts)
+            continue
         if group in esm_columns:
             columns = esm_columns[group]
             # 누락 열을 임의로 0으로 채우지 않는다. 잘못된 입력을 학습 전에 드러낸다.
             missing = [c for c in columns if c not in df]
             if missing:
+                if group == "structure":
+                    raise ValueError(f"structure 열 누락: {missing}. --structure에 AlphaFold WT CIF 또는 "
+                                     "pos,sasa,neighbor_count,plddt 표를 지정할 것. confidence JSON만으로는 계산 불가")
                 raise ValueError(f"{group}: 필요한 열 {len(missing)}개 누락. 예: {missing[:3]}")
             blocks.append(df[columns])
             continue
@@ -221,7 +246,7 @@ def design_matrix(df, groups):
             name = "charge_ph7_lehninger" if group == "charge" else "hydropathy"
             scales = {name: peptide_scale(group)}
         else:
-            # 기존의 donor/acceptor 성향 근사이며 peptides 값이나 실제 결합 수가 아님.
+            # 기존 저장 모델과 합성 정답 생성에서만 사용하는 서열 기반 성향 근사.
             # 각 집합에 속하면 1, 아니면 0이다. hbond 그룹은 두 개의 열을 만든다.
             scales = {"donor": {a: int(a in "RKWNQHSTY") for a in AA},
                       "acceptor": {a: int(a in "DENQHSTY") for a in AA}}
@@ -238,4 +263,8 @@ def design_matrix(df, groups):
         raise ValueError(f"결측/무한 feature를 확인할 것: {list(bad[:5])}")
     if "plddt" in X and not X.plddt.between(0, 100).all():
         raise ValueError("plddt 범위는 0~100임")
+    if "sasa" in X and not X.sasa.ge(0).all():
+        raise ValueError("sasa는 0 이상의 면적이어야 함")
+    if "neighbor_count" in X and not (X.neighbor_count.ge(0) & X.neighbor_count.mod(1).eq(0)).all():
+        raise ValueError("neighbor_count는 0 이상의 정수여야 함")
     return X
