@@ -140,7 +140,7 @@ def run(args):
     # 따라서 평가는 이 단백질의 '보지 않은 위치'에 대한 예측을 측정한다.
     # 같은 실행의 모든 조합이 같은 행·같은 fold 인덱스를 재사용한다.
     # 인접 위치의 서열 window 중첩이나 다른 단백질로의 일반화까지 검증하는 분할은 아니다.
-    folds = list(GroupKFold(n_splits=args.folds).split(df, y, groups=df.pos))
+    folds = list(GroupKFold(n_splits=args.folds, shuffle=True, random_state=42).split(df, y, groups=df.pos))
     if args.command == "compare":
         # 예: charge, hydropathy를 고르면 esm / esm+charge / esm+hydropathy /
         # esm+charge+hydropathy를 실행한다. 모든 부분집합을 탐색하는 코드는 아니다.
