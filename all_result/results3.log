@@ -1,0 +1,13 @@
+Evaluating esm
+Evaluating esm+charge
+Evaluating esm+hydropathy
+Evaluating esm+hbond
+Evaluating esm+structure
+Evaluating esm+charge+hydropathy+hbond+structure
+                             features  n_rows  n_features  spearman     rmse      mae  delta_spearman  delta_rmse  delta_mae
+                                  esm    1837        1281  0.462646 0.759773 0.578602        0.000000    0.000000   0.000000
+                           esm+charge    1837        1282  0.470339 0.763376 0.579984        0.007693    0.003603   0.001382
+                       esm+hydropathy    1837        1282  0.481689 0.749351 0.565613        0.019043   -0.010422  -0.012988
+                            esm+hbond    1837        1283  0.462646 0.759773 0.578602        0.000000    0.000000   0.000000
+                        esm+structure    1837        1284  0.462669 0.765614 0.586069        0.000023    0.005841   0.007467
+esm+charge+hydropathy+hbond+structure    1837        1288  0.494705 0.745092 0.559400        0.032060   -0.014681  -0.019202

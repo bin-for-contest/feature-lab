@@ -1,0 +1,18 @@
+{
+  "command": "compare",
+  "input": "/mss5/knh0107/Bin/workspace/data/brca1_esm2_features.parquet",
+  "out": "/mss5/knh0107/Bin/workspace/results4-1",
+  "structure": "/mss5/knh0107/Bin/workspace/data/AF-P38398-F1-model_v6.cif",
+  "features": [
+    "charge",
+    "hydropathy",
+    "hbond",
+    "structure"
+  ],
+  "task": "regression",
+  "folds": 3,
+  "target": "DMS_score",
+  "groups_for_cv": "pos",
+  "sklearn_version": "1.7.2",
+  "lightgbm_version": "4.7.0"
+}
